@@ -1,0 +1,6 @@
+*.pkl
+!models/best_model.pkl
+!models/scaler.pkl
+dataset_clean.csv
+__pycache__/
+*.pyc
