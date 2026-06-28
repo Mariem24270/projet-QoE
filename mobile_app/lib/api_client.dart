@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiClient {
   final Dio _dio = Dio();
-  final String baseUrl = "http://10.0.2.2:8000";
+  final String baseUrl = "http://127.0.0.1:8000";
   
   static final ApiClient _instance = ApiClient._internal();
   factory ApiClient() => _instance;
@@ -95,6 +95,9 @@ class ApiClient {
       'niveau_qualite': qe,
       'throughput': metrics['throughput'] ?? 0.0,
       'delay_qos': metrics['delay_qos'] ?? 0.0,
+      'jitter': metrics['jitter'] ?? 0.0,               
+      'packet_loss': metrics['packet_loss'] ?? 0.0,      
+      'avg_bitrate': metrics['avg_bitrate'] ?? 0.0,       
       'mesure_le': DateTime.now().toIso8601String(),
     };
     
@@ -116,7 +119,16 @@ class ApiClient {
           await saveMeasureLocally(metrics, mos, qe);
         }
 
-        return {'mos': mos, 'niveau_qualite': qe, 'sauvegarde': saved};
+        return {
+          'mos': mos, 
+          'niveau_qualite': qe, 
+          'sauvegarde': saved,
+          'throughput': metrics['throughput'],
+          'delay_qos': metrics['delay_qos'],
+          'jitter': metrics['jitter'],
+          'packet_loss': metrics['packet_loss'],
+          'avg_bitrate': metrics['avg_bitrate'],
+        };
       }
       throw Exception("Erreur serveur");
     } on DioException catch (e) {
