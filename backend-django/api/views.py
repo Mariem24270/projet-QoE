@@ -8,10 +8,16 @@ from django.contrib.auth import authenticate
 from .serializers import InscriptionSerializer, MesureInputSerializer, MesureSerializer
 from .models import Mesure
 from .ia_utils import predire_qoe, niveau_depuis_score
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from rest_framework import status
+from .models import Utilisateur
+
 
 
 class InscriptionView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = [] # <-- INDISPENSABLE : Empêche Django de chercher un Token JWT pour s'inscrire !
 
     def post(self, request):
         serializer = InscriptionSerializer(data=request.data)
@@ -25,38 +31,42 @@ class InscriptionView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+
+
+
+
 class LoginView(APIView):
-    """
-    POST /api/login/
-    Login par EMAIL + mot de passe (pas username).
-    """
     permission_classes = [AllowAny]
+    authentication_classes = []  # Indispensable pour éviter les conflits de token
 
     def post(self, request):
-        email = request.data.get("email")
-        password = request.data.get("password")
+        username_or_email = request.data.get('username')
+        password = request.data.get('password')
 
-        if not email or not password:
-            return Response(
-                {"erreur": "Email et mot de passe requis."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # Par défaut, on suppose qu'il a saisi son e-mail
+        email_to_authenticate = username_or_email
 
-        # USERNAME_FIELD = "email" dans models.py -> authenticate() utilise
-        # bien l'email ici, malgré le nom du paramètre "username" côté Django.
-        utilisateur = authenticate(request, username=email, password=password)
+        # Si l'utilisateur a saisi son NOM D'UTILISATEUR (pas de @), on cherche son email en BDD
+        if username_or_email and "@" not in username_or_email:
+            try:
+                user_obj = Utilisateur.objects.get(username=username_or_email)
+                email_to_authenticate = user_obj.email
+            except Utilisateur.DoesNotExist:
+                pass  # Si pas trouvé, on laisse l'ancienne valeur pour que authenticate gère l'échec
 
-        if utilisateur is None:
-            return Response(
-                {"erreur": "Email ou mot de passe incorrect."},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
+        # Puisque USERNAME_FIELD = "email", on doit passer l'adresse email dans le paramètre 'username' !
+        user = authenticate(username=email_to_authenticate, password=password)
 
-        refresh = RefreshToken.for_user(utilisateur)
-        return Response({
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-        }, status=status.HTTP_200_OK)
+        if user is not None:
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                'token': str(refresh.access_token),
+                'access': str(refresh.access_token),
+                'refresh': str(refresh)
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({'error': 'Identifiants incorrects ou rejetés.'}, status=status.HTTP_400_BAD_REQUEST)
+        
 
 
 class PredictionView(APIView):
