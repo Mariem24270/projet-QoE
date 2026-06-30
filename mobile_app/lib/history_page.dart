@@ -102,12 +102,11 @@ class HistoryPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ApiClient apiClient = ApiClient();
-    final bool isAuthed = apiClient.isAuthenticated;
-
+    // L'historique est exclusivement cloud : cette page n'est accessible
+    // qu'à un utilisateur authentifié (onglet masqué sinon).
     return Scaffold(
       appBar: AppBar(
-        title: Text(isAuthed ? "ESPACE DE STOCKAGE CLOUD" : "STOCKAGE LOCAL APPAREIL"),
+        title: const Text("ESPACE DE STOCKAGE CLOUD"),
         backgroundColor: const Color(0xFF1E1E1E),
       ),
       body: StreamBuilder<List<dynamic>>(

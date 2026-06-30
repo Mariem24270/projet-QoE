@@ -1,6 +1,4 @@
 import 'package:dio/dio.dart';
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiClient {
   final Dio _dio = Dio();
@@ -25,7 +23,7 @@ class ApiClient {
   }
 
   // INSCRIPTION + CONNEXION AUTOMATIQUE LIÉE
-  Future<void> register(String username, String email, String password) async {
+  Future<String> register(String username, String email, String password) async {
     try {
       final response = await _dio.post('$baseUrl/api/inscription/', data: {
         'username': username,
@@ -37,9 +35,9 @@ class ApiClient {
       final token = response.data['access'];
       if (token != null) {
         setAuthToken(token);
-      } else {
-        throw Exception("Compte créé, mais aucun jeton d'accès reçu.");
+        return token;
       }
+      throw Exception("Compte créé, mais aucun jeton d'accès reçu.");
     } on DioException catch (e) {
       if (e.response?.data != null && e.response!.data is Map) {
         final data = e.response!.data as Map;
@@ -71,38 +69,19 @@ class ApiClient {
     }
   }
 
+  /// Récupère l'historique des mesures depuis le cloud (par utilisateur).
+  ///
+  /// L'historique n'existe que pour un utilisateur authentifié : aucune
+  /// donnée n'est conservée localement sur l'appareil. Sans session active,
+  /// on renvoie une liste vide.
   Future<List<dynamic>> fetchHistory() async {
-    if (isAuthenticated) {
-      try {
-        final response = await _dio.get('$baseUrl/api/historique/');
-        return response.data as List<dynamic>;
-      } on DioException catch (e) {
-        throw Exception("Erreur historique cloud : ${e.message}");
-      }
-    } else {
-      final prefs = await SharedPreferences.getInstance();
-      final localData = prefs.getStringList('local_measures') ?? [];
-      return localData.map((item) => jsonDecode(item)).toList().reversed.toList();
+    if (!isAuthenticated) return [];
+    try {
+      final response = await _dio.get('$baseUrl/api/historique/');
+      return response.data as List<dynamic>;
+    } on DioException catch (e) {
+      throw Exception("Erreur historique cloud : ${e.message}");
     }
-  }
-
-  Future<void> saveMeasureLocally(Map<String, dynamic> metrics, double mos, String qe) async {
-    final prefs = await SharedPreferences.getInstance();
-    final localData = prefs.getStringList('local_measures') ?? [];
-    
-    final newMeasure = {
-      'score_qoe': mos,
-      'niveau_qualite': qe,
-      'throughput': metrics['throughput'] ?? 0.0,
-      'delay_qos': metrics['delay_qos'] ?? 0.0,
-      'jitter': metrics['jitter'] ?? 0.0,               
-      'packet_loss': metrics['packet_loss'] ?? 0.0,      
-      'avg_bitrate': metrics['avg_bitrate'] ?? 0.0,       
-      'mesure_le': DateTime.now().toIso8601String(),
-    };
-    
-    localData.add(jsonEncode(newMeasure));
-    await prefs.setStringList('local_measures', localData);
   }
 
   Future<Map<String, dynamic>> sendMetricsToBackend(Map<String, dynamic> metrics) async {
@@ -113,11 +92,9 @@ class ApiClient {
         
         final double mos = data['score_qoe']?.toDouble() ?? 0.0;
         final String qe = data['niveau_qualite'] ?? '';
+        // La sauvegarde est gérée exclusivement côté cloud : le backend
+        // n'enregistre la mesure que si l'utilisateur est authentifié.
         final bool saved = data['sauvegarde'] ?? false;
-
-        if (!saved) {
-          await saveMeasureLocally(metrics, mos, qe);
-        }
 
         return {
           'mos': mos, 

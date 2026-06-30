@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'measurement_view_model.dart';
 import 'auth_page.dart';
 import 'history_page.dart';
-import 'api_client.dart';
+import 'auth/auth_controller.dart';
 
 void main() => runApp(const MyApp());
 
@@ -46,13 +46,58 @@ class MainNavigationPage extends StatefulWidget {
 
 class _MainNavigationPageState extends State<MainNavigationPage> {
   int _currentIndex = 0;
-  final ApiClient _apiClient = ApiClient();
-  String _connectedUser = "Utilisateur";
+  final AuthController _auth = AuthController();
   final MeasurementViewModel _viewModel = MeasurementViewModel();
 
   @override
+  void initState() {
+    super.initState();
+    _auth.addListener(_onAuthChanged);
+    // Restaure une session existante (rester connecté entre deux lancements).
+    _auth.restoreSession();
+  }
+
+  @override
+  void dispose() {
+    _auth.removeListener(_onAuthChanged);
+    super.dispose();
+  }
+
+  void _onAuthChanged() {
+    if (!mounted) return;
+    setState(() {
+      // Les onglets « Historique » et « Profil » disparaissent à la
+      // déconnexion ; on revient alors à « Mesurer ».
+      final int tabCount = _auth.isAuthenticated ? 3 : 1;
+      if (_currentIndex >= tabCount) _currentIndex = 0;
+    });
+  }
+
+  Future<void> _openAuthPage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const AuthScreen(initialRegisterMode: true)),
+    );
+    if (mounted && _auth.isAuthenticated) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Bienvenue, ${_auth.displayName} !")),
+      );
+    }
+  }
+
+  Future<void> _handleLogout() async {
+    await _auth.logout();
+    _viewModel.resetValues();
+    if (mounted) {
+      setState(() => _currentIndex = 0);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Déconnexion réussie")),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final Widget profileTab = _apiClient.isAuthenticated
+    final Widget profileTab = _auth.isAuthenticated
         ? Scaffold(
             body: SingleChildScrollView(
               child: Column(
@@ -87,7 +132,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
                         ),
                         const SizedBox(height: 15),
                         Text(
-                          _connectedUser,
+                          _auth.displayName,
                           style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1.1),
                         ),
                         const SizedBox(height: 6),
@@ -140,16 +185,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
                           ),
                           icon: const Icon(Icons.logout, color: Colors.white, size: 20),
                           label: const Text("Se déconnecter", style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-                          onPressed: () {
-                            setState(() {
-                              _apiClient.clearAuthToken();
-                              _viewModel.logout();
-                              _currentIndex = 0;
-                            });
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text("Déconnexion réussie")),
-                            );
-                          },
+                          onPressed: _handleLogout,
                         ),
                       ],
                     ),
@@ -158,25 +194,34 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
               ),
             ),
           )
-        : AuthPage(
-            onAuthSuccess: (username) {
-              setState(() {
-                _connectedUser = username;
-                _currentIndex = 0;
-              });
-            },
-          );
+        : const SizedBox.shrink();
 
+    // Pages alignées sur les onglets : « Historique » et « Profil »
+    // n'existent qu'une fois l'utilisateur authentifié, car l'historique
+    // est stocké exclusivement dans le cloud (aucune donnée locale).
     final List<Widget> pages = [
       const Scaffold(body: MeasurementWidget()),
-      const HistoryPage(),
-      profileTab,
+      if (_auth.isAuthenticated) const HistoryPage(),
+      if (_auth.isAuthenticated) profileTab,
     ];
+
+    // Onglets de navigation : « Historique » et « Profil » apparaissent
+    // uniquement après connexion.
+    final List<BottomNavigationBarItem> navItems = [
+      const BottomNavigationBarItem(icon: Icon(Icons.bolt), label: "Mesurer"),
+      if (_auth.isAuthenticated)
+        const BottomNavigationBarItem(icon: Icon(Icons.bar_chart_rounded), label: "Historique"),
+      if (_auth.isAuthenticated)
+        const BottomNavigationBarItem(icon: Icon(Icons.fingerprint_rounded), label: "Profil"),
+    ];
+
+    final int safeIndex = _currentIndex.clamp(0, pages.length - 1);
 
     return Scaffold(
       appBar: AppBar(
+        centerTitle: false,
+        titleSpacing: 16,
         title: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.analytics_outlined, color: Theme.of(context).colorScheme.primary, size: 22),
@@ -185,33 +230,70 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
           ],
         ),
         actions: [
-          if (_apiClient.isAuthenticated)
+          if (_auth.isAuthenticated)
             IconButton(
               icon: const Icon(Icons.power_settings_new, color: Colors.redAccent, size: 22),
-              onPressed: () {
-                setState(() {
-                  _apiClient.clearAuthToken();
-                  _viewModel.logout();
-                  _currentIndex = 0;
-                });
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Déconnecté avec succès")),
-                );
-              },
+              tooltip: "Se déconnecter",
+              onPressed: _handleLogout,
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
+              child: ElevatedButton.icon(
+                style: ButtonStyle(
+                  // Vert principal de l'application, harmonisé avec le logo et
+                  // le bouton « LANCER L'ÉVALUATION », y compris hover/focus/active.
+                  backgroundColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.pressed)) {
+                      return const Color(0xFF00C853); // vert plus profond (active)
+                    }
+                    if (states.contains(WidgetState.hovered) ||
+                        states.contains(WidgetState.focused)) {
+                      return const Color(0xFF1DE786); // vert plus clair (hover/focus)
+                    }
+                    return const Color(0xFF00E676); // vert principal (repos)
+                  }),
+                  foregroundColor: const WidgetStatePropertyAll(Colors.black),
+                  overlayColor: WidgetStatePropertyAll(
+                    const Color(0xFF00E676).withOpacity(0.15),
+                  ),
+                  elevation: const WidgetStatePropertyAll(0),
+                  padding: const WidgetStatePropertyAll(
+                    EdgeInsets.symmetric(horizontal: 14),
+                  ),
+                  shape: WidgetStatePropertyAll(
+                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+                label: const Text(
+                  "Se connecter",
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+                onPressed: _openAuthPage,
+              ),
             ),
         ],
       ),
-      body: pages[_currentIndex],
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        type: BottomNavigationBarType.fixed,
-        onTap: (index) => setState(() => _currentIndex = index),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.bolt), label: "Mesurer"),
-          BottomNavigationBarItem(icon: Icon(Icons.bar_chart_rounded), label: "Historique"),
-          BottomNavigationBarItem(icon: Icon(Icons.fingerprint_rounded), label: "Profil"),
-        ],
-      ),
+      body: pages[safeIndex],
+      // Apparition/disparition fluide de la barre lorsqu'un onglet est ajouté.
+      bottomNavigationBar: navItems.length >= 2
+          ? AnimatedSwitcher(
+              duration: const Duration(milliseconds: 350),
+              transitionBuilder: (child, anim) => SizeTransition(
+                sizeFactor: anim,
+                axisAlignment: -1,
+                child: FadeTransition(opacity: anim, child: child),
+              ),
+              child: BottomNavigationBar(
+                key: ValueKey(navItems.length),
+                currentIndex: safeIndex,
+                type: BottomNavigationBarType.fixed,
+                onTap: (index) => setState(() => _currentIndex = index),
+                items: navItems,
+              ),
+            )
+          : null,
     );
   }
 }
@@ -438,7 +520,7 @@ class _MeasurementWidgetState extends State<MeasurementWidget> {
                               ),
                               const SizedBox(height: 10),
                               Text(
-                                viewModel.sauvegarde ? "Sauvegardé et synchronisé sur votre espace Cloud" : "Sauvegardé localement sur cet appareil",
+                                viewModel.sauvegarde ? "Sauvegardé et synchronisé sur votre espace Cloud" : "Connectez-vous pour sauvegarder cette mesure dans le cloud",
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(fontSize: 11, color: Colors.grey, height: 1.3),
                               ),
